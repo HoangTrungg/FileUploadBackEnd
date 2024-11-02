@@ -1,0 +1,11 @@
+  version: '4.34.2'
+  services:
+    mongo:
+      image: mongo:7.0
+      ports:
+        - "27017:27017"
+      volumes:
+        - mongodata:/database/db
+  volumes:
+    mongodata: 
+      driver: local
