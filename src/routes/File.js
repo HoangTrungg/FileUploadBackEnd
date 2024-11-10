@@ -3,7 +3,6 @@ const router = express.Router();
 const fileController = require('../app/controllers/FileController');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const upload = require('../utils/upload');
-const checkFileAccess = require('../middleware/checkFileAccess')
 
 router.post(
   '/upload',
@@ -57,12 +56,11 @@ router.post(
 router.get('/files/:fileId/download', authenticateToken, fileController.downloadFile);
 
 router.get('/getShareFile',authenticateToken,fileController.getSharedFilesModel )
-router.get('/files/:fileId/getAllowedEmails', authenticateToken, fileController.getAllowedEmails);
-router.delete('/files/:fileId/removeAllowedEmails', authenticateToken, fileController.removeAllowedEmail);
 
 router.get('/shared-files', authenticateToken, fileController.getSharedFiles);
 router.get('/shared/:shareLink', authenticateToken, fileController.downloadSharedFile);
 router.put('/shared/:shareLink', authenticateToken, fileController.updateShareFile);
 router.delete('/shared/:shareLink/revoke', authenticateToken, fileController.revokeShareAccess);
+router.get('/shared-info/:shareLink',authenticateToken, fileController.getSharedFileInfo);
 
 module.exports = router;

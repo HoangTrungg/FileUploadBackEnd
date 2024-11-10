@@ -1,11 +1,15 @@
-  version: '4.34.2'
-  services:
-    mongo:
-      image: mongo:7.0
-      ports:
-        - "27017:27017"
-      volumes:
-        - mongodata:/database/db
-  volumes:
-    mongodata: 
-      driver: local
+services:
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27500:27017"
+    volumes:
+      - mongodata:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongodb
+      MONGO_INITDB_ROOT_PASSWORD: 123456
+    restart: always
+
+volumes:
+  mongodata:
+    driver: local

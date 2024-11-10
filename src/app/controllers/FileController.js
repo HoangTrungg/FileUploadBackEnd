@@ -52,8 +52,6 @@
                 const files = await File.find({
                     $or: [
                         { uploadedBy: req.user.id },
-                        { access: 'public' },
-                        { allowedEmails: req.user.email }
                     ],
                     deleted: false 
                 })
@@ -172,30 +170,34 @@
         
         async getSharedFiles(req, res) {
             try {
-            const shareFiles = await ShareFile.find({
-                $or: [
-                { sharedBy: req.user.id },
-                { sharedWith: req.user.email }
-                ]
-            }).populate('fileId');
+                const shareFiles = await ShareFile.find({
+                    $or: [
+                        { sharedBy: req.user.id },
+                        { sharedWith: req.user.email }
+                    ]
+                }).populate('fileId');
         
-            res.json({
-                success: true,
-                shareFile: shareFiles.map(share => ({
-                id: share._id,
-                fileId: share.fileId._id,
-                filename: share.fileId.originalName,
-                shareLink: share.shareLink,
-                sharedWith: share.fileId.allowedEmails,
-                createdAt: share.createdAt
-                }))
-            });
+                const validShareFiles = shareFiles
+                    .filter(share => share.fileId)
+                    .map(share => ({
+                        id: share._id,
+                        fileId: share.fileId._id,
+                        filename: share.fileId.originalName,
+                        shareLink: share.shareLink,
+                        sharedWith: share.fileId.allowedEmails,
+                        createdAt: share.createdAt
+                    }));
+        
+                res.json({
+                    success: true,
+                    shareFile: validShareFiles
+                });
             } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: 'Lỗi khi lấy danh sách file được chia sẻ',
-                error: error.message
-            });
+                res.status(500).json({
+                    success: false,
+                    message: 'Lỗi khi lấy danh sách file được chia sẻ',
+                    error: error.message
+                });
             }
         }
         
@@ -257,7 +259,7 @@
             if (!file) {
             return res.status(404).json({
                 success: false,
-                message: 'File not found'
+                message: 'Không tìm thấy file'
             });
             }
 
@@ -265,7 +267,7 @@
             if (!fs.existsSync(filePath)) {
             return res.status(404).json({
                 success: false,
-                message: 'File does not exist on the server'
+                message: 'File không tồn tại trên server'
             });
             }
 
@@ -277,20 +279,20 @@
                 if (err) {
                 res.status(500).json({
                     success: false,
-                    message: 'Error while downloading the file'
+                    message: 'Lỗi khi tải file'
                 });
                 }
             });
             } else {
             res.status(403).json({
                 success: false,
-                message: 'You do not have permission to access this file'
+                message: 'Bạn không có quyền truy cập'
             });
             }
         } catch (error) {
             res.status(500).json({
             success: false,
-            message: 'Error downloading file',
+            message: 'Lỗi',
             error: error.message
             });
         }
@@ -376,37 +378,108 @@
             }
         }
 
+        async getSharedFileInfo(req, res) {
+            try {
+                const { shareLink } = req.params;
+                
+                const sharedFile = await ShareFile.findOne({ shareLink })
+                                                .populate('fileId')
+                                                .populate('sharedBy', 'email name');
+        
+                if (!sharedFile) {          
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Không tìm thấy link chia sẻ'
+                    });
+                }
+    
+                const file = sharedFile.fileId;
+                if (!file || file.deleted) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'File không tồn tại hoặc đã bị xóa'
+                    });
+                }
+        
+                const isPublic = file.access === 'public';
+                
+                if (!isPublic) {
+                    if (!req.headers.authorization) {
+                        return res.status(401).json({
+                            success: false,
+                            message: 'Vui lòng đăng nhập để truy cập file này',
+                            requiresAuth: true,
+                            isPublic: false
+                        });
+                    }
+        
+                    const userEmail = req.user.email;
+                    
+                    if (!file.allowedEmails.includes(userEmail)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: 'Bạn không có quyền truy cập file này',
+                            isPublic: false
+                        });
+                    }
+                }
+        
+                res.json({
+                    success: true,
+                    fileInfo: {
+                        fileName: file.originalName,
+                        fileSize: file.size,
+                        mimeType: file.mimeType,
+                        access: file.access,
+                        createdAt: sharedFile.createdAt,
+                        sharedBy: sharedFile.sharedBy.email,
+                        isPublic: isPublic
+                    }
+                });
+        
+            } catch (error) {
+                console.error('Error in getSharedFileInfo:', error);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Lỗi server'
+                });
+            }
+        }
+
         async changeFileAccess(req, res) {
             try {
                 const { access, allowedEmails } = req.body;
                 const file = await File.findById(req.params.fileId);
-
+        
                 if (!file) {
                     return res.status(404).json({
                         success: false,
                         message: 'Không tìm thấy file'
                     });
                 }
-
+        
                 if (file.uploadedBy.toString() !== req.user.id) {
                     return res.status(403).json({
                         success: false,
                         message: 'Bạn không có quyền cập nhật file này'
                     });
                 }
-
+        
                 if (access && !['public', 'private'].includes(access)) {
                     return res.status(400).json({
                         success: false,
                         message: 'Quyền truy cập không hợp lệ'
                     });
                 }
-
+        
                 file.access = access || file.access;
-                if (allowedEmails) {
+                
+                if (access === 'public') {
+                    file.allowedEmails = [];
+                } else if (allowedEmails) {
                     file.allowedEmails = [...new Set([...file.allowedEmails, ...allowedEmails])];
                 }
-
+        
                 await file.save();
                 res.json({
                     success: true,
@@ -424,9 +497,7 @@
                 });
             }
         }
-
         
-
         async softDeleteFile(req, res) {
             try {
                 const file = await File.findById(req.params.fileId);
@@ -467,7 +538,7 @@
                 if (!mongoose.Types.ObjectId.isValid(fileId)) {
                     return res.status(400).json({
                         success: false,
-                        message: 'Invalid file ID'
+                        message: 'Không tìm được file'
                     });
                 }
                 
@@ -475,14 +546,14 @@
                 if (!file) {
                     return res.status(404).json({
                         success: false,
-                        message: 'File not found'
+                        message: 'Không tìm thấy file'
                     });
                 }
         
                 if (file.uploadedBy.toString() !== req.user.id) {
                     return res.status(403).json({
                         success: false,
-                        message: 'You do not have permission to delete this file'
+                        message: 'Bạn không có quyền truy cập file'
                     });
                 }
         
@@ -508,6 +579,9 @@
         async getAllFilesWithDeleted(req, res) {
             try {
                 const files = await File.findWithDeleted({
+                    $or: [
+                        { uploadedBy: req.user.id },
+                    ],
                     deleted : true
                 }).select('-filePath');
 
@@ -570,68 +644,7 @@
                 });
             }
         }
-
-        async getAllowedEmails(req, res)  {
-        try {
-        const { fileId } = req.params;
-        const userId = req.user.id;
     
-        const file = await File.findById(fileId);
-    
-        if (!file) return res.status(404).json({ message: 'File not found' });
-        if (!file.uploadedBy.equals(userId))
-            return res.status(403).json({ message: 'Access denied' });
-    
-        res.json({ allowedEmails: file.allowedEmails });
-        } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error' });
-        }
-    };
-    
-    async removeAllowedEmail(req, res) {
-        try {
-            const { fileId } = req.params;
-            const { email, shareLink, shareFileId } = req.body;
-            const userId = req.user.id;
-
-            const file = await File.findById(fileId);
-            if (!file) return res.status(404).json({ message: 'Không tìm thấy file' });
-            if (!file.uploadedBy.equals(userId))
-                return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
-
-            let shareFile;
-            if (shareLink) {
-                shareFile = await ShareFile.findOne({ shareLink, fileId });
-            } else if (shareFileId) {
-                shareFile = await ShareFile.findById(shareFileId);
-            }
-
-            if (!shareFile) {
-                return res.status(404).json({ message: 'Không tìm thấy bản ghi ShareFile' });
-            }
-
-            if (file.allowedEmails.includes(email)) {
-                file.allowedEmails = file.allowedEmails.filter((allowedEmail) => allowedEmail !== email);
-                await file.save();
-                
-                await ShareFile.findByIdAndDelete(shareFile._id); 
-
-                return res.json({
-                    message: 'Email đã được xóa thành công',
-                    allowedEmails: file.allowedEmails
-                });
-            } else {
-                return res.status(400).json({ message: 'Email không tồn tại trong allowedEmails' });
-            }
-
-        } catch (error) {
-            console.error('Lỗi khi xóa email:', error);
-            res.status(500).json({ message: 'Lỗi máy chủ' });
-        }
-    };
-
-
     }
 
     module.exports = new FileController();
